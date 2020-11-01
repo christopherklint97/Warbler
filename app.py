@@ -114,6 +114,9 @@ def logout():
     """Handle logout of user."""
 
     # IMPLEMENT THIS
+    do_logout()
+    flash(f"Logout successful, goodbye!", "success")
+    return redirect('/login')
 
 
 ##############################################################################
