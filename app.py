@@ -1,11 +1,12 @@
 import os
+import pdb
 
 from flask import Flask, render_template, request, flash, redirect, session, g
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
-from forms import UserAddForm, LoginForm, MessageForm
-from models import db, connect_db, User, Message
+from forms import UserAddForm, LoginForm, MessageForm, EditProfileForm
+from models import db, connect_db, User, Message, Follows, Likes
 
 CURR_USER_KEY = "curr_user"
 
@@ -180,6 +181,18 @@ def users_followers(user_id):
     return render_template('users/followers.html', user=user)
 
 
+@app.route('/users/<int:user_id>/likes')
+def users_likes(user_id):
+    """Show list of liked messages of this user."""
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    user = User.query.get_or_404(user_id)
+    return render_template('users/likes.html', user=user)
+
+
 @app.route('/users/follow/<int:follow_id>', methods=['POST'])
 def add_follow(follow_id):
     """Add a follow for the currently-logged-in user."""
@@ -215,6 +228,65 @@ def profile():
     """Update profile for current user."""
 
     # IMPLEMENT THIS
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    form = EditProfileForm()
+
+    if form.validate_on_submit():
+        user = User.authenticate(form.username.data,
+                                 form.password.data)
+
+        if user:
+            user.username = form.username.data
+            user.email = form.email.data
+            user.image_url = form.image_url.data or User.image_url.default.arg
+            user.header_image_url = form.header_image_url.data or User.header_image_url.default.arg
+            user.bio = form.bio.data
+            db.session.add(user)
+            db.session.commit()
+            flash(f"{user.username} info has been updated!", "success")
+            return redirect(f"/users/{user.id}")
+        else:
+            flash(f"The password was incorrect!", "danger")
+
+    return render_template('users/edit.html', form=form, user=g.user)
+
+
+@app.route('/users/add_like/<int:msg_id>', methods=['POST'])
+def add_like(msg_id):
+    """ Like a tweet/message """
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    # Creating variables using the message info
+    user_id = g.user.id
+    message_id = msg_id
+
+    # Creating a list of liked messages for global user
+    liked_msg_ids = [like.id for like in g.user.likes]
+
+    # Add the like if the msg_id is not already in the liked messages list of ids
+    if msg_id not in liked_msg_ids:
+        like = Likes(user_id=user_id, message_id=message_id)
+        db.session.add(like)
+        db.session.commit()
+
+    # Else remove the like
+    else:
+        like = (Likes
+                .query
+                .filter_by(user_id=user_id)
+                .filter_by(message_id=message_id)
+                .first())
+        db.session.delete(like)
+        db.session.commit()
+
+    likes = g.user.likes
+    return redirect('/')
 
 
 @app.route('/users/delete', methods=["POST"])
@@ -295,13 +367,21 @@ def homepage():
     """
 
     if g.user:
+        # Creating a list of ids based on who the user is following plus themself
+        following = g.user.following
+        following.append(g.user)
+        following_ids = [follow.id for follow in following]
+        # Creating list of ids based on user likes
+        likes = [like.id for like in g.user.likes]
+        # Filtering messages based on that list
         messages = (Message
                     .query
+                    .filter(Message.user_id.in_(following_ids))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
 
-        return render_template('home.html', messages=messages)
+        return render_template('home.html', messages=messages, likes=likes)
 
     else:
         return render_template('home-anon.html')
